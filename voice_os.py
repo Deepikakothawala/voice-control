@@ -4,18 +4,14 @@ import shutil
 import torch
 import numpy as np
 import soundfile as sf
-import sounddevice as sd
 import difflib 
 import pyautogui
 import time 
 import pyttsx3 
 import psutil  
-import easyocr # NEW: The Vision AI
-import mss     # NEW: The High-Speed Screenshot Engine
-import cv2     # NEW: Image processing
 
 # ==========================================================
-# 1. ACTIVATE PRO-LEVEL MONKEY PATCHES FIRST!
+# 1. OS-LEVEL AUDIO PATCHES (Prevents Windows Crashes)
 # ==========================================================
 import torchaudio
 if not hasattr(torchaudio, "list_audio_backends"):
@@ -34,8 +30,7 @@ torchaudio.load = safe_audio_load
 
 original_symlink_to = pathlib.Path.symlink_to
 def safe_symlink_to(self, target, target_is_directory=False):
-    try:
-        original_symlink_to(self, target, target_is_directory)
+    try: original_symlink_to(self, target, target_is_directory)
     except OSError as e:
         if getattr(e, 'winerror', None) == 1314:
             if self.exists(): self.unlink()
@@ -45,54 +40,58 @@ def safe_symlink_to(self, target, target_is_directory=False):
 pathlib.Path.symlink_to = safe_symlink_to
 
 # ==========================================================
-# 2. INITIALIZE ENGINES (MOUTH & EYES)
+# 2. INITIALIZE TTS ENGINE (THE MOUTH)
 # ==========================================================
 engine = pyttsx3.init()
 voices = engine.getProperty('voices')
 engine.setProperty('voice', voices[1].id if len(voices) > 1 else voices[0].id)
-engine.setProperty('rate', 175)
+engine.setProperty('rate', 180) # Slightly faster for production feel
 
 def speak(text):
     print(f"KRIVANTA: {text}")
     engine.say(text)
     engine.runAndWait()
 
-print("System: Booting Vision AI (This takes a moment)...")
-# Initialize the OCR reader. It will use CPU if no compatible GPU is found.
-ocr_reader = easyocr.Reader(['en']) 
-
 # ==========================================================
-# 3. LOAD AUDIO AI LIBRARIES (EARS & BOUNCER)
+# 3. BOOT AI LIBRARIES (EARS & BIOMETRICS)
 # ==========================================================
 import speech_recognition as sr
 from faster_whisper import WhisperModel
 from speechbrain.inference.speaker import SpeakerRecognition
 
-print("System: Booting Voice Engine...")
+print("System: Booting Whisper STT Engine...")
 stt_model = WhisperModel("small.en", device="cpu", compute_type="int8")
 
-print("System: Booting Biometric Security...")
+print("System: Booting Biometric Security Engine...")
 verification = SpeakerRecognition.from_hparams(
     source="speechbrain/spkrec-ecapa-voxceleb", 
     savedir="pretrained_models/spkrec-ecapa-voxceleb"
 )
 
+# Microphone Production Tuning
 recognizer = sr.Recognizer()
-recognizer.energy_threshold = 400 
-recognizer.dynamic_energy_threshold = True
+recognizer.energy_threshold = 1000 # High threshold to ignore AC units/fans
+recognizer.dynamic_energy_threshold = False # Prevents auto-adjusting to noise
+recognizer.pause_threshold = 0.5 # Executes immediately after 0.5s of silence
+
+# Ensure Security Directory Exists
+if not os.path.exists("authorized_voices"):
+    os.makedirs("authorized_voices")
+    print("WARNING: 'authorized_voices' folder created. Please add .wav profiles.")
 
 is_sleeping = False
 
 # ==========================================================
-# 4. THE COMMAND DICTIONARY (THE KRIVANTA BRAIN)
+# 4. THE COMMAND ENGINE
 # ==========================================================
-def execute_command(command_text):
+def execute_command(command_text, user_name):
     global is_sleeping
 
+    # --- STATE MANAGEMENT ---
     if is_sleeping:
         if "system wake" in command_text:
             is_sleeping = False
-            speak("Systems reactivated. I am listening.")
+            speak(f"Welcome back, {user_name}. Systems online.")
         return 
 
     if "system sleep" in command_text:
@@ -100,65 +99,36 @@ def execute_command(command_text):
         speak("Entering standby mode.")
         return
 
-    # --- DYNAMIC 1: THE SIGHT ENGINE (NEW) ---
-    if command_text.startswith("system sight click "):
-        target_word = command_text.replace("system sight click ", "").strip().lower()
-        speak(f"Scanning for {target_word}")
-        print(f">>> EXECUTING OCR SCAN FOR: [{target_word.upper()}]")
-        
-        with mss.mss() as sct:
-            # 1. Take a screenshot of the main monitor
-            monitor = sct.monitors[1]
-            screenshot = np.array(sct.grab(monitor))
-            
-            # 2. Convert to grayscale to make the AI read it faster
-            gray = cv2.cvtColor(screenshot, cv2.COLOR_BGRA2GRAY)
-            
-            # 3. Read all the text on the screen
-            results = ocr_reader.readtext(gray)
-            
-            # 4. Hunt for the target word
-            found = False
-            for (bbox, text, prob) in results:
-                if target_word in text.lower():
-                    # Calculate the exact dead-center X and Y coordinates of the word
-                    center_x = int((bbox[0][0] + bbox[2][0]) / 2) + monitor["left"]
-                    center_y = int((bbox[0][1] + bbox[2][1]) / 2) + monitor["top"]
-                    
-                    pyautogui.click(center_x, center_y)
-                    speak("Clicking target.")
-                    found = True
-                    break # Stop looking once we click it
-            
-            if not found:
-                speak(f"I cannot see {target_word} on the screen.")
-        return
-
-    # --- DYNAMIC 2: UNIVERSAL LAUNCHER ---
+    # --- DYNAMIC 1: UNIVERSAL MAXIMIZED LAUNCHER ---
     if command_text.startswith("system launch "):
         target = command_text.replace("system launch ", "").strip()
         speak(f"Launching {target}")
+        
+        # Hits the Windows key, types the app, and hits Enter
         pyautogui.press('win')
         time.sleep(0.5)
         pyautogui.write(target)
         time.sleep(0.8)
         pyautogui.press('enter')
+        
+        # Attempt to force maximization after 2 seconds
+        time.sleep(2)
+        pyautogui.hotkey('win', 'up') 
         return
 
-    # --- DYNAMIC 3: DICTATION MODE ---
+    # --- DYNAMIC 2: HIGH-SPEED DICTATION ---
     if command_text.startswith("system type "):
         text_to_type = command_text.replace("system type ", "").strip()
-        speak("Typing")
-        pyautogui.write(text_to_type)
+        print(f">>> DICTATING: {text_to_type}")
+        pyautogui.write(text_to_type, interval=0.01) # Types blazing fast
         return
 
-    # --- STRICT SHORTCUT COMMANDS ---
+    # --- STATIC CORE 4 COMMANDS ---
     valid_commands = [
-        "system status", "system desktop", "system downloads", "system documents", "system drives",
-        "system go up", "system go back", 
+        "system status", "system desktop", "system downloads", "system documents",
         "system maximize", "system minimize", "system snap left", "system snap right", 
         "system close window", "system switch app",
-        "system browser", "system new tab", "system close tab", "system recover tab", "system next tab",
+        "system browser", "system new tab", "system close tab", 
         "system scroll down", "system scroll up",
         "system mute", "system volume up", "system volume down", "system play media", "system lock pc"
     ]
@@ -168,72 +138,51 @@ def execute_command(command_text):
         return 
         
     cmd = matches[0]
-    print(f"\n>>> EXECUTING: [{cmd.upper()}]")
+    print(f"\n>>> EXECUTING ACTION: [{cmd.upper()}]")
     
     if cmd == "system status":
         battery = psutil.sensors_battery()
         percent = battery.percent if battery else "unknown"
-        speak(f"All systems operational. Battery is at {percent} percent.")
+        speak(f"All systems optimal. Battery is at {percent} percent.")
     elif cmd == "system desktop":
         os.system(r'explorer /n, "C:\Users\lalit\OneDrive\Desktop"')
     elif cmd == "system downloads":
         os.system(r'explorer /n, "C:\Users\lalit\Downloads"')
     elif cmd == "system documents":
         os.system(r'explorer /n, "C:\Users\lalit\Documents"')
-    elif cmd == "system drives":
-        os.system(r'explorer /n, "shell:::{20D04FE0-3AEA-1069-A2D8-08002B30309D}"') 
-    elif cmd == "system go up":
-        pyautogui.hotkey('alt', 'up')
-    elif cmd == "system go back":
-        pyautogui.hotkey('alt', 'left')
-    elif cmd == "system maximize":
-        pyautogui.hotkey('win', 'up')
-    elif cmd == "system minimize":
-        pyautogui.hotkey('win', 'down')
-    elif cmd == "system snap left":
-        pyautogui.hotkey('win', 'left')
-    elif cmd == "system snap right":
-        pyautogui.hotkey('win', 'right')
-    elif cmd == "system close window":
-        pyautogui.hotkey('alt', 'f4')
-    elif cmd == "system switch app":
-        pyautogui.hotkey('alt', 'tab')
-    elif cmd == "system browser":
-        os.system("start chrome https://www.google.com") 
-    elif cmd == "system new tab":
-        pyautogui.hotkey('ctrl', 't')
-    elif cmd == "system close tab":
-        pyautogui.hotkey('ctrl', 'w')
-    elif cmd == "system recover tab":
-        pyautogui.hotkey('ctrl', 'shift', 't')
-    elif cmd == "system next tab":
-        pyautogui.hotkey('ctrl', 'tab')
-    elif cmd == "system scroll down":
-        pyautogui.press('pagedown')
-    elif cmd == "system scroll up":
-        pyautogui.press('pageup')
-    elif cmd == "system mute":
-        pyautogui.press('volumemute')
-    elif cmd == "system volume up":
+        
+    elif cmd == "system maximize": pyautogui.hotkey('win', 'up')
+    elif cmd == "system minimize": pyautogui.hotkey('win', 'down')
+    elif cmd == "system snap left": pyautogui.hotkey('win', 'left')
+    elif cmd == "system snap right": pyautogui.hotkey('win', 'right')
+    elif cmd == "system close window": pyautogui.hotkey('alt', 'f4')
+    elif cmd == "system switch app": pyautogui.hotkey('alt', 'tab')
+        
+    elif cmd == "system browser": os.system("start chrome https://www.google.com") 
+    elif cmd == "system new tab": pyautogui.hotkey('ctrl', 't')
+    elif cmd == "system close tab": pyautogui.hotkey('ctrl', 'w')
+    elif cmd == "system scroll down": pyautogui.press('pagedown')
+    elif cmd == "system scroll up": pyautogui.press('pageup')
+        
+    elif cmd == "system mute": pyautogui.press('volumemute')
+    elif cmd == "system volume up": 
         for _ in range(5): pyautogui.press('volumeup')
-    elif cmd == "system volume down":
+    elif cmd == "system volume down": 
         for _ in range(5): pyautogui.press('volumedown')
-    elif cmd == "system play media":
-        pyautogui.press('playpause')
-    elif cmd == "system lock pc":
-        os.system("rundll32.exe user32.dll,LockWorkStation")
+    elif cmd == "system play media": pyautogui.press('playpause')
+    elif cmd == "system lock pc": os.system("rundll32.exe user32.dll,LockWorkStation")
 
 # ==========================================================
-# 5. THE MAIN LOOP
+# 5. THE PRODUCTION MAIN LOOP
 # ==========================================================
 with sr.Microphone() as source:
-    print("\nSystem: Calibrating for background noise... (2 seconds)")
+    print("\nSystem: Calibrating microphone for production environment...")
     recognizer.adjust_for_ambient_noise(source, duration=2)
     print("\n========================================")
-    print(" KRIVANTA CORE ONLINE. MACHINE VISION ACTIVE.")
+    print(" KRIVANTA OS ONLINE. MULTI-USER SECURED.")
     print("========================================\n")
     
-    speak("Krivanta core is online with visual processing active.")
+    speak("Krivanta OS is online. Awaiting authorized voice input.")
 
     while True:
         try:
@@ -243,32 +192,45 @@ with sr.Microphone() as source:
             with open(temp_filename, "wb") as f:
                 f.write(audio.get_wav_data())
             
+            # High-speed transcription
             segments, _ = stt_model.transcribe(
-                temp_filename, beam_size=5, vad_filter=True,
+                temp_filename, beam_size=1, vad_filter=True, # Beam size 1 for maximum speed
                 vad_parameters=dict(min_silence_duration_ms=500)
             )
             
-            full_text = ""
-            for segment in segments:
-                full_text += segment.text.strip() + " "
-                
+            full_text = "".join([s.text.strip() + " " for s in segments])
             clean_text = full_text.lower().replace(".", "").replace(",", "").replace("!", "").replace("?", "").strip()
             
-            if clean_text.startswith("system"):
-                print(f"\nWake Word Detected: [{clean_text}]")
+            if clean_text.startswith("system") or clean_text.startswith("krivanta"):
+                print(f"\nProcessing Audio: [{clean_text}]")
                 
-                score, prediction = verification.verify_files("master_profile.wav", temp_filename)
+                access_granted = False
+                authorized_user = "Unknown"
                 
-                if prediction.item() and score.item() > 0.10:
-                    execute_command(clean_text)
+                # Multi-User Biometric Loop
+                for filename in os.listdir("authorized_voices"):
+                    if filename.endswith(".wav"):
+                        filepath = os.path.join("authorized_voices", filename)
+                        score, prediction = verification.verify_files(filepath, temp_filename)
+                        
+                        # Threshold tuned to 0.15 for balance of security and speed
+                        if prediction.item() and score.item() > 0.15:
+                            access_granted = True
+                            authorized_user = filename.replace(".wav", "").capitalize()
+                            break 
+                
+                if access_granted:
+                    print(f">>> BIOMETRICS PASSED: {authorized_user}")
+                    execute_command(clean_text, authorized_user)
                 else:
-                    print(f"!!! ACCESS DENIED !!! Unauthorized user. (Score: {score.item():.2f})")
+                    speak("Access denied.")
+                    print("!!! SECURITY ALERT: Voice print not recognized in database.")
             
             if os.path.exists(temp_filename):
                 os.remove(temp_filename)
 
         except KeyboardInterrupt:
-            speak("Shutting down the Krivanta core. Goodbye.")
+            speak("Powering down Krivanta OS.")
             break
         except Exception as e:
-            pass
+            pass # Failsafe to prevent OS from crashing on read errors

@@ -1,0 +1,13 @@
+# Ignore AI Models
+pretrained_models/
+model/
+
+# Ignore Audio Files (for privacy and size)
+*.wav
+
+# Ignore Python Cache
+__pycache__/
+
+# Ignore Virtual Environments (if you ever make one)
+venv/
+env/
